@@ -1,0 +1,253 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String   @id @default(cuid())
+  email      String   @unique
+  name       String?
+  image      String?
+  googleId   String?  @unique
+  xp         Int      @default(0)
+  level      Int      @default(1)
+  elo        Int      @default(1000)
+  seasonElo  Int      @default(1000)
+  createdAt  DateTime @default(now())
+
+  accounts     Account[]
+  sessions     Session[]
+  characters   UserCharacter[]
+  friends      Friendship[]    @relation("UserFriends")
+  friendOf     Friendship[]    @relation("FriendOf")
+  pushSubs     PushSubscription[]
+  gamesAsP1    Game[]          @relation("Player1")
+  gamesAsP2    Game[]          @relation("Player2")
+  gamesAsP3    Game[]          @relation("Player3")
+  achievements UserAchievement[]
+  purchases    Purchase[]
+
+  @@map("users")
+}
+
+// NextAuth required models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model Character {
+  id               String        @id @default(cuid())
+  slug             String        @unique
+  name             String
+  tier             CharacterTier
+  unlockType       UnlockType
+  unlockCondition  String?
+  priceUsd         Decimal?      @db.Decimal(6, 2)
+  seasonId         String?
+  abilityKey       String
+  releasedAt       DateTime      @default(now())
+  seasonEndsAt     DateTime?
+
+  users   UserCharacter[]
+  season  Season?         @relation(fields: [seasonId], references: [id])
+
+  @@map("characters")
+}
+
+model UserCharacter {
+  userId      String
+  characterId String
+  unlockedAt  DateTime     @default(now())
+  source      UnlockSource
+
+  user      User      @relation(fields: [userId], references: [id])
+  character Character @relation(fields: [characterId], references: [id])
+
+  @@id([userId, characterId])
+  @@map("user_characters")
+}
+
+model Game {
+  id            String     @id @default(cuid())
+  roomId        String     @unique
+  mode          GameMode
+  status        GameStatus @default(WAITING)
+  startedAt     DateTime?
+  endedAt       DateTime?
+  winnerUserId  String?
+  totalTurns    Int?
+  snapshotJson  Json?
+  replayFrames  Json?
+
+  player1Id     String?
+  player2Id     String?
+  player3Id     String?
+  player1CharId String?
+  player2CharId String?
+  player3CharId String?
+
+  player1 User? @relation("Player1", fields: [player1Id], references: [id])
+  player2 User? @relation("Player2", fields: [player2Id], references: [id])
+  player3 User? @relation("Player3", fields: [player3Id], references: [id])
+
+  @@map("games")
+}
+
+model Achievement {
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  name        String
+  description String
+  characterId String?
+  xpReward    Int     @default(0)
+
+  users UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  userId        String
+  achievementId String
+  earnedAt      DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id])
+  achievement Achievement @relation(fields: [achievementId], references: [id])
+
+  @@id([userId, achievementId])
+  @@map("user_achievements")
+}
+
+model Purchase {
+  id        String           @id @default(cuid())
+  userId    String
+  itemType  PurchaseItemType
+  itemId    String
+  amountUsd Decimal          @db.Decimal(6, 2)
+  stripeId  String           @unique
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("purchases")
+}
+
+model Season {
+  id         String   @id @default(cuid())
+  name       String
+  startsAt   DateTime
+  endsAt     DateTime
+  passPrice  Decimal  @db.Decimal(6, 2)
+
+  characters Character[]
+
+  @@map("seasons")
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("push_subscriptions")
+}
+
+model Friendship {
+  userId    String
+  friendId  String
+  createdAt DateTime @default(now())
+
+  user   User @relation("UserFriends", fields: [userId], references: [id])
+  friend User @relation("FriendOf", fields: [friendId], references: [id])
+
+  @@id([userId, friendId])
+  @@map("friendships")
+}
+
+enum CharacterTier {
+  BASE
+  ACHIEVEMENT
+  PREMIUM
+  SEASON
+}
+
+enum UnlockType {
+  FREE
+  ACHIEVEMENT
+  PURCHASE
+  SEASON_PASS
+}
+
+enum UnlockSource {
+  ACHIEVEMENT
+  PURCHASE
+  SEASON_PASS
+  STARTER
+}
+
+enum GameMode {
+  DUEL
+  TRIANGLE
+  VS_AI
+  ASYNC
+  TOURNAMENT
+}
+
+enum GameStatus {
+  WAITING
+  IN_PROGRESS
+  FINISHED
+  ABANDONED
+}
+
+enum PurchaseItemType {
+  CHARACTER
+  BOARD_SKIN
+  SEASON_PASS
+  STARTER_PACK
+}
