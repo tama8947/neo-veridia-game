@@ -8,6 +8,8 @@ import { HexTile } from './HexTile'
 import { PlayerToken } from './PlayerToken'
 import { NucleusCore } from './NucleusCore'
 import { PostFX } from './PostFX'
+import { SiegeOverlay } from './SiegeOverlay'
+import { ClusterGlow } from './ClusterGlow'
 
 interface BoardCanvasProps {
   context: GameContext
@@ -71,6 +73,12 @@ export function BoardCanvas({
               playerIndex={i}
             />
           ))}
+
+          {/* Siege rings */}
+          <SiegeOverlay tiles={context.tiles} />
+
+          {/* Cluster glow pulses */}
+          <ClusterGlow context={context} />
 
           {/* Post-processing FX */}
           <PostFX />

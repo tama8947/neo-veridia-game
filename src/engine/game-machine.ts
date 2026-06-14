@@ -1,12 +1,13 @@
 import { setup, assign, createActor } from 'xstate'
 import type { GameContext, GameIntent, TileId } from './schemas'
 import { buildBoard } from './board'
-import { computePaths, isValidPath } from './pathfinding'
+import { computePaths } from './pathfinding'
+import { calculateRent, applyUpgrade, applyMortgage } from './economy'
 import {
   NUCLEUS_CREDITS_BONUS, NUCLEUS_ENERGY_BONUS, ENERGY_REGEN_PER_TURN,
-  STASIS_COST_CREDITS, STASIS_COST_ENERGY, MORTGAGE_RATIO,
+  STASIS_COST_CREDITS, STASIS_COST_ENERGY,
   STARTING_CREDITS, STARTING_ENERGY, MAX_TURNS, COUNTDOWN_TURNS, COUNTDOWN_EVENTS,
-  XP_REWARDS, GUILD_RESCUE_CREDITS,
+  GUILD_RESCUE_CREDITS, RENT_ENERGY_RATIO,
 } from './constants'
 
 // ── Initial context factory ───────────────────────────────────────────────────
@@ -45,32 +46,6 @@ function activePlayers(ctx: GameContext) {
   return ctx.turnOrder.filter(id => !ctx.players[id].isEliminated)
 }
 
-function calculateRent(ctx: GameContext, tileId: TileId): number {
-  const tile = ctx.tiles[tileId]
-  if (!tile || tile.isMortgaged || !tile.ownerId) return 0
-
-  let rent = tile.baseRent
-  // Upgrade multiplier
-  const upgradeMultipliers = [1.0, 1.5, 2.0, 3.0]
-  rent = Math.floor(rent * upgradeMultipliers[tile.upgradeLevel])
-
-  // Cluster bonus: 3 adjacent tiles of same color owned by same player
-  if (tile.color) {
-    const colorTiles = Object.values(ctx.tiles).filter(
-      t => t.color === tile.color && t.ownerId === tile.ownerId
-    )
-    const allAdjacent = colorTiles.length === 3 // simplified check for now
-    if (allAdjacent) rent = Math.floor(rent * 2.0)
-  }
-
-  // Global effect: rent increase 25% (from turn 20 countdown)
-  if (ctx.globalEffects.some(e => e.key === 'RENT_INCREASE_25')) {
-    rent = Math.floor(rent * 1.25)
-  }
-
-  return rent
-}
-
 // ── XState Machine ───────────────────────────────────────────────────────────
 
 export const gameMachine = setup({
@@ -107,7 +82,7 @@ export const gameMachine = setup({
     canAffordRentEnergy: ({ context }) => {
       const player = currentPlayer(context)
       const rent = calculateRent(context, player.currentTileId)
-      return player.energy >= Math.ceil(rent / 20)
+      return player.energy >= Math.ceil(rent / RENT_ENERGY_RATIO)
     },
 
     isBankrupt: ({ context }) => {
@@ -129,18 +104,14 @@ export const gameMachine = setup({
   },
 
   actions: {
-    rollDice: assign({
-      diceValue: () => (Math.ceil(Math.random() * 6)) as 1 | 2 | 3 | 4 | 5 | 6,
-      phase: 'choosing_path' as const,
-      availablePaths: ({ context }) => {
-        const value = Math.ceil(Math.random() * 6)
-        return computePaths({ ...context, diceValue: value as GameContext['diceValue'] }, context.turnOrder[context.currentPlayerIndex])
-      },
-    }),
-
-    setAvailablePaths: assign({
-      availablePaths: ({ context }) =>
-        computePaths(context, context.turnOrder[context.currentPlayerIndex]),
+    rollDice: assign(({ context }) => {
+      const diceValue = (Math.ceil(Math.random() * 6)) as 1 | 2 | 3 | 4 | 5 | 6
+      const ctxWithDice = { ...context, diceValue }
+      return {
+        diceValue,
+        phase: 'choosing_path' as const,
+        availablePaths: computePaths(ctxWithDice, context.turnOrder[context.currentPlayerIndex]),
+      }
     }),
 
     movePlayer: assign({
@@ -198,7 +169,7 @@ export const gameMachine = setup({
         const player = context.players[playerId]
         const tile = context.tiles[player.currentTileId]
         const rent = calculateRent(context, player.currentTileId)
-        const energyCost = Math.ceil(rent / 20)
+        const energyCost = Math.ceil(rent / RENT_ENERGY_RATIO)
         const ownerId = tile.ownerId!
         return {
           ...context.players,
@@ -322,6 +293,29 @@ export const gameMachine = setup({
       },
     }),
 
+    upgradeProperty: assign(({ context, event }) => {
+      const tileId = (event as { type: 'UPGRADE_PROPERTY'; tileId: TileId }).tileId
+      const playerId = context.turnOrder[context.currentPlayerIndex]
+      return applyUpgrade(context, playerId, tileId)
+    }),
+
+    mortgageProperty: assign(({ context, event }) => {
+      const tileId = (event as { type: 'MORTGAGE_PROPERTY'; tileId: TileId }).tileId
+      const playerId = context.turnOrder[context.currentPlayerIndex]
+      return applyMortgage(context, playerId, tileId)
+    }),
+
+    guildRescue: assign({
+      players: ({ context }) => {
+        const playerId = context.turnOrder[context.currentPlayerIndex]
+        const player = context.players[playerId]
+        return {
+          ...context.players,
+          [playerId]: { ...player, credits: player.credits + GUILD_RESCUE_CREDITS },
+        }
+      },
+    }),
+
     addLog: assign({
       log: ({ context, event }) => [
         ...context.log,
@@ -339,11 +333,16 @@ export const gameMachine = setup({
   initial: 'rolling',
   context: createInitialContext([]),
 
+  on: {
+    UPGRADE_PROPERTY:  { actions: ['upgradeProperty', 'addLog'] },
+    MORTGAGE_PROPERTY: { actions: ['mortgageProperty', 'addLog'] },
+  },
+
   states: {
     rolling: {
       on: {
         ROLL_DICE: {
-          actions: ['rollDice', 'setAvailablePaths'],
+          actions: 'rollDice',
           target: 'choosing_path',
         },
       },
@@ -430,8 +429,13 @@ export const gameMachine = setup({
     },
 
     guild_event: {
-      // Events handled externally for now; auto-advance
-      always: { target: 'end_turn' },
+      on: {
+        GUILD_RESCUE: { actions: ['guildRescue', 'addLog'], target: 'end_turn' },
+      },
+      after: {
+        // Auto-advance after 500ms if no action taken (solo mode / AI)
+        500: { target: 'end_turn' },
+      },
     },
 
     end_turn: {
