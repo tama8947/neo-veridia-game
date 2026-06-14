@@ -4,9 +4,9 @@ import { z } from 'zod'
 import { auth } from '@/auth'
 import { getProduct } from '@/lib/store'
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', {
-  apiVersion: '2026-05-27.dahlia',
-})
+function getStripe() {
+  return new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2026-05-27.dahlia' })
+}
 
 const CheckoutBodySchema = z.object({
   productId: z.string(),
@@ -31,7 +31,7 @@ export async function POST(req: Request) {
 
   const baseUrl = process.env.NEXT_PUBLIC_URL ?? 'http://localhost:3000'
 
-  const checkoutSession = await stripe.checkout.sessions.create({
+  const checkoutSession = await getStripe().checkout.sessions.create({
     mode: 'payment',
     line_items: [
       {

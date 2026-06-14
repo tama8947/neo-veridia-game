@@ -1,16 +1,7 @@
 import { auth } from '@/auth'
 import { redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
-import dynamic from 'next/dynamic'
-
-const RoomClient = dynamic(
-  () => import('./RoomClient').then(m => m.RoomClient),
-  { ssr: false, loading: () => (
-    <div className="w-full h-dvh bg-[#0a0a0f] flex items-center justify-center text-cyan-400 font-mono">
-      Conectando a sala…
-    </div>
-  )},
-)
+import { RoomClientLoader } from './RoomClientLoader'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -44,7 +35,7 @@ export default async function RoomPage({ params }: Props) {
   const characterSlug = userChar?.character.slug ?? 'el-arquitecto'
 
   return (
-    <RoomClient
+    <RoomClientLoader
       roomId={roomId}
       userId={session.user.id}
       userName={session.user.name ?? 'Jugador'}

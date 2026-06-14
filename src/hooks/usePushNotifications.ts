@@ -1,17 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 export type PushState = 'idle' | 'subscribed' | 'denied' | 'unsupported'
 
 export function usePushNotifications() {
-  const [state, setState] = useState<PushState>('idle')
-
-  useEffect(() => {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      setState('unsupported')
-    }
-  }, [])
+  const [state, setState] = useState<PushState>(() => {
+    if (typeof window === 'undefined') return 'idle'
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported'
+    return 'idle'
+  })
 
   async function subscribe() {
     if (!('serviceWorker' in navigator)) return

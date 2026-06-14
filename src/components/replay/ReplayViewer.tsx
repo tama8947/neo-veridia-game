@@ -34,7 +34,10 @@ export function ReplayViewer({ frames }: ReplayViewerProps) {
 
   useEffect(() => {
     if (!playing) return
-    if (cursor >= frames.length - 1) { setPlaying(false); return }
+    if (cursor >= frames.length - 1) {
+      const id = setTimeout(() => setPlaying(false), 0)
+      return () => clearTimeout(id)
+    }
     const id = setTimeout(() => step(1), 900)
     return () => clearTimeout(id)
   }, [playing, cursor, frames.length, step])

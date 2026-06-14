@@ -1,3 +1,5 @@
+'use client'
+
 import dynamic from 'next/dynamic'
 
 // R3F nunca corre en SSR — regla de AGENTS.md
