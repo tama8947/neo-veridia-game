@@ -134,11 +134,41 @@ export default class GameRoom implements Party.Server {
       this.room.broadcast(JSON.stringify({ type: 'GAME_STATE', context: ctx } satisfies ServerMsg))
 
       if (snapshot.matches('finished')) {
-        const players = Object.values(ctx.players).filter(p => !p.isEliminated)
-        const winner = players.sort((a, b) => b.credits - a.credits)[0]
+        const activePlayers = Object.values(ctx.players).filter(p => !p.isEliminated)
+        const winner = activePlayers.sort((a, b) => b.credits - a.credits)[0]
+        const winnerDef = this.state.players.find(p => p.id === winner?.id)
+
         this.room.broadcast(
-          JSON.stringify({ type: 'GAME_OVER', winnerId: winner?.userId } satisfies ServerMsg)
+          JSON.stringify({ type: 'GAME_OVER', winnerId: winnerDef?.userId } satisfies ServerMsg)
         )
+
+        // Notify Next.js to save results + update XP/ELO
+        const nextjsUrl = process.env.NEXTJS_URL ?? 'http://localhost:3000'
+        void fetch(`${nextjsUrl}/api/game/finish`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-partykit-secret': process.env.PARTYKIT_SECRET ?? '',
+          },
+          body: JSON.stringify({
+            roomId: this.room.id,
+            winnerUserId: winnerDef?.userId,
+            players: this.state.players
+              .filter(p => !p.isAI)
+              .map(p => {
+                const player = ctx.players[p.id]
+                return {
+                  userId:       p.userId,
+                  xpEarned:     player?.xpEarned ?? 0,
+                  finalCredits: player?.credits ?? 0,
+                  finalEnergy:  player?.energy ?? 0,
+                }
+              }),
+            replayFrames: [],
+            totalTurns: ctx.currentTurn,
+          }),
+        }).catch(console.error)
+
         return
       }
 
