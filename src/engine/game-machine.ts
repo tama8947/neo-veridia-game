@@ -3,6 +3,9 @@ import type { GameContext, GameIntent, TileId } from './schemas'
 import { buildBoard } from './board'
 import { computePaths } from './pathfinding'
 import { calculateRent, applyUpgrade, applyMortgage } from './economy'
+import { GUILD_EVENT_DECK, drawGuildEvent, applyGuildEvent } from './events'
+import { tickPnas } from './diplomacy'
+import { startAuction, resolveAuction } from './auction'
 import {
   NUCLEUS_CREDITS_BONUS, NUCLEUS_ENERGY_BONUS, ENERGY_REGEN_PER_TURN,
   STASIS_COST_CREDITS, STASIS_COST_ENERGY,
@@ -316,6 +319,26 @@ export const gameMachine = setup({
       },
     }),
 
+    drawAndApplyGuildEvent: assign(({ context }) => {
+      const card = drawGuildEvent(GUILD_EVENT_DECK)
+      return applyGuildEvent({ ...context, lastEvent: card }, card)
+    }),
+
+    tickAllPnas: assign(({ context }) => tickPnas(context)),
+
+    startFinalAuction: assign(({ context }) => {
+      const unownedTile = Object.entries(context.tiles).find(
+        ([, t]) => t.type === 'property' && !t.ownerId
+      )
+      if (!unownedTile) return context
+      return startAuction(context, unownedTile[0] as import('./schemas').TileId)
+    }),
+
+    resolveCurrentAuction: assign(({ context }) => {
+      if (!context.auction?.active) return context
+      return resolveAuction(context)
+    }),
+
     addLog: assign({
       log: ({ context, event }) => [
         ...context.log,
@@ -429,17 +452,15 @@ export const gameMachine = setup({
     },
 
     guild_event: {
+      entry: 'drawAndApplyGuildEvent',
       on: {
         GUILD_RESCUE: { actions: ['guildRescue', 'addLog'], target: 'end_turn' },
       },
-      after: {
-        // Auto-advance after 500ms if no action taken (solo mode / AI)
-        500: { target: 'end_turn' },
-      },
+      after: { 500: { target: 'end_turn' } },
     },
 
     end_turn: {
-      entry: ['regenEnergy', 'advanceTurn'],
+      entry: ['regenEnergy', 'tickAllPnas', 'advanceTurn'],
       always: [
         { guard: 'isCountdownTurn', actions: 'applyCountdownEvent', target: 'rolling' },
         { target: 'rolling' },
