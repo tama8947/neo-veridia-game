@@ -3,6 +3,7 @@ import { createActor } from 'xstate'
 import { gameMachine, createInitialContext } from '../src/engine/game-machine'
 import { IntentSchema } from '../src/engine/schemas'
 import type { GameContext } from '../src/engine/schemas'
+import { chooseIntent } from '../src/engine/ai/ai-player'
 
 // ── Message types (client ↔ PartyKit) ────────────────────────────────────────
 
@@ -19,8 +20,9 @@ export type ClientMsg =
   | { type: 'START_GAME' }
 
 interface RoomState {
-  players: Array<{ id: string; userId: string; characterSlug: string; connectionId: string }>
+  players: Array<{ id: string; userId: string; characterSlug: string; connectionId: string; isAI: boolean }>
   gameStarted: boolean
+  vsAI: boolean
   actor: ReturnType<typeof createActor<typeof gameMachine>> | null
 }
 
@@ -28,6 +30,7 @@ export default class GameRoom implements Party.Server {
   private state: RoomState = {
     players: [],
     gameStarted: false,
+    vsAI: false,
     actor: null,
   }
 
@@ -89,6 +92,7 @@ export default class GameRoom implements Party.Server {
       userId: msg.userId,
       characterSlug: msg.characterSlug,
       connectionId: conn.id,
+      isAI: false,
     })
 
     this.room.broadcast(
@@ -97,12 +101,25 @@ export default class GameRoom implements Party.Server {
   }
 
   private async handleStart(conn: Party.Connection) {
-    if (this.state.players.length < 2) {
-      conn.send(JSON.stringify({ type: 'ERROR', message: 'Need at least 2 players' } satisfies ServerMsg))
-      return
-    }
     if (this.state.gameStarted) {
       conn.send(JSON.stringify({ type: 'ERROR', message: 'Game already started' } satisfies ServerMsg))
+      return
+    }
+
+    // Add AI opponent if only 1 human player (VS_AI mode)
+    if (this.state.players.length === 1) {
+      this.state.vsAI = true
+      this.state.players.push({
+        id: 'p2',
+        userId: 'ai-player',
+        characterSlug: 'el-energista',
+        connectionId: 'ai',
+        isAI: true,
+      })
+    }
+
+    if (this.state.players.length < 2) {
+      conn.send(JSON.stringify({ type: 'ERROR', message: 'Need at least 2 players' } satisfies ServerMsg))
       return
     }
 
@@ -122,6 +139,22 @@ export default class GameRoom implements Party.Server {
         this.room.broadcast(
           JSON.stringify({ type: 'GAME_OVER', winnerId: winner?.userId } satisfies ServerMsg)
         )
+        return
+      }
+
+      // Trigger AI move if it's the AI's turn
+      if (this.state.vsAI && this.state.actor) {
+        const currentPlayerId = ctx.turnOrder[ctx.currentPlayerIndex]
+        const currentPlayer = this.state.players.find(p => p.id === currentPlayerId)
+        if (currentPlayer?.isAI) {
+          // Small delay so the UI can render state before AI acts
+          setTimeout(() => {
+            if (!this.state.actor) return
+            const latest = this.state.actor.getSnapshot().context
+            const intent = chooseIntent(latest, currentPlayerId)
+            this.state.actor!.send(intent)
+          }, 800)
+        }
       }
     })
 
