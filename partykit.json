@@ -1,0 +1,5 @@
+{
+  "name": "neo-veridia",
+  "main": "party/room.ts",
+  "compatibilityDate": "2024-01-01"
+}
