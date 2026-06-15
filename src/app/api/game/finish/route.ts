@@ -18,7 +18,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid body', issues: parsed.error.issues }, { status: 400 })
   }
 
-  const { roomId, winnerUserId, players, totalTurns } = parsed.data
+  const { roomId, winnerUserId, players, totalTurns, replayFrames } = parsed.data
 
   // Fetch current ELO for all players
   const userIds = players.map(p => p.userId)
@@ -32,10 +32,11 @@ export async function POST(req: Request) {
   await prisma.game.update({
     where: { roomId },
     data: {
-      status:      'FINISHED',
-      endedAt:     new Date(),
+      status:       'FINISHED',
+      endedAt:      new Date(),
       winnerUserId,
       totalTurns,
+      replayFrames: (replayFrames ?? []) as object[],
     },
   }).catch(() => null) // ignore if game not found (demo mode)
 

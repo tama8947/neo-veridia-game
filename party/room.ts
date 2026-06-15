@@ -4,6 +4,8 @@ import { gameMachine, createInitialContext } from '../src/engine/game-machine'
 import { IntentSchema } from '../src/engine/schemas'
 import type { GameContext } from '../src/engine/schemas'
 import { chooseIntent } from '../src/engine/ai/ai-player'
+import { extractReplayFrame } from '../src/lib/replay'
+import type { ReplayFrame } from '../src/lib/replay'
 
 // ── Message types (client ↔ PartyKit) ────────────────────────────────────────
 
@@ -24,6 +26,9 @@ interface RoomState {
   gameStarted: boolean
   vsAI: boolean
   actor: ReturnType<typeof createActor<typeof gameMachine>> | null
+  replayFrames: ReplayFrame[]
+  lastNotifiedUserId: string | null
+  lastRecordedTurn: number
 }
 
 export default class GameRoom implements Party.Server {
@@ -32,12 +37,14 @@ export default class GameRoom implements Party.Server {
     gameStarted: false,
     vsAI: false,
     actor: null,
+    replayFrames: [],
+    lastNotifiedUserId: null,
+    lastRecordedTurn: -1,
   }
 
   constructor(readonly room: Party.Room) {}
 
   async onConnect(conn: Party.Connection) {
-    // Send current game state to newly connected client
     if (this.state.actor) {
       const ctx = this.state.actor.getSnapshot().context
       conn.send(JSON.stringify({ type: 'GAME_STATE', context: ctx } satisfies ServerMsg))
@@ -106,7 +113,6 @@ export default class GameRoom implements Party.Server {
       return
     }
 
-    // Add AI opponent if only 1 human player (VS_AI mode)
     if (this.state.players.length === 1) {
       this.state.vsAI = true
       this.state.players.push({
@@ -131,9 +137,19 @@ export default class GameRoom implements Party.Server {
 
     this.state.actor.subscribe(snapshot => {
       const ctx = snapshot.context
+
+      // Record one frame per turn (on rolling phase) to keep replay compact
+      if (ctx.phase === 'rolling' && ctx.currentTurn !== this.state.lastRecordedTurn) {
+        this.state.lastRecordedTurn = ctx.currentTurn
+        this.state.replayFrames.push(extractReplayFrame(ctx))
+      }
+
       this.room.broadcast(JSON.stringify({ type: 'GAME_STATE', context: ctx } satisfies ServerMsg))
 
       if (snapshot.matches('finished')) {
+        // Record final frame
+        this.state.replayFrames.push(extractReplayFrame(ctx))
+
         const activePlayers = Object.values(ctx.players).filter(p => !p.isEliminated)
         const winner = activePlayers.sort((a, b) => b.credits - a.credits)[0]
         const winnerDef = this.state.players.find(p => p.id === winner?.id)
@@ -142,7 +158,6 @@ export default class GameRoom implements Party.Server {
           JSON.stringify({ type: 'GAME_OVER', winnerId: winnerDef?.userId } satisfies ServerMsg)
         )
 
-        // Notify Next.js to save results + update XP/ELO
         const nextjsUrl = process.env.NEXTJS_URL ?? 'http://localhost:3000'
         void fetch(`${nextjsUrl}/api/game/finish`, {
           method: 'POST',
@@ -164,7 +179,7 @@ export default class GameRoom implements Party.Server {
                   finalEnergy:  player?.energy ?? 0,
                 }
               }),
-            replayFrames: [],
+            replayFrames: this.state.replayFrames,
             totalTurns: ctx.currentTurn,
           }),
         }).catch(console.error)
@@ -172,12 +187,34 @@ export default class GameRoom implements Party.Server {
         return
       }
 
+      // Push notification on turn change (only for human players)
+      if (ctx.phase === 'rolling') {
+        const currentPlayerId = ctx.turnOrder[ctx.currentPlayerIndex]
+        const currentPlayer = this.state.players.find(p => p.id === currentPlayerId)
+        if (currentPlayer && !currentPlayer.isAI && currentPlayer.userId !== this.state.lastNotifiedUserId) {
+          this.state.lastNotifiedUserId = currentPlayer.userId
+          const nextjsUrl = process.env.NEXTJS_URL ?? 'http://localhost:3000'
+          void fetch(`${nextjsUrl}/api/push/notify`, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-partykit-secret': process.env.PARTYKIT_SECRET ?? '',
+            },
+            body: JSON.stringify({
+              userId: currentPlayer.userId,
+              title:  '¡Es tu turno!',
+              body:   'Neo-Veridia te espera.',
+              url:    `/room/${this.room.id}`,
+            }),
+          }).catch(() => null)
+        }
+      }
+
       // Trigger AI move if it's the AI's turn
       if (this.state.vsAI && this.state.actor) {
         const currentPlayerId = ctx.turnOrder[ctx.currentPlayerIndex]
         const currentPlayer = this.state.players.find(p => p.id === currentPlayerId)
         if (currentPlayer?.isAI) {
-          // Small delay so the UI can render state before AI acts
           setTimeout(() => {
             if (!this.state.actor) return
             const latest = this.state.actor.getSnapshot().context
@@ -205,7 +242,6 @@ export default class GameRoom implements Party.Server {
       return
     }
 
-    // Verify sender owns the current turn
     const snapshot = this.state.actor.getSnapshot()
     const currentPlayerId = snapshot.context.turnOrder[snapshot.context.currentPlayerIndex]
     const sender = this.state.players.find(p => p.userId === msg.senderId)

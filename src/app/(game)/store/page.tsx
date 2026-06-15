@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { STORE_PRODUCTS, type StoreProduct } from '@/lib/store'
 
 const TYPE_LABEL: Record<string, string> = {
@@ -63,6 +64,25 @@ function ProductCard({ product }: { product: StoreProduct }) {
 const FILTER_TYPES = ['all', 'character', 'board_skin', 'starter_pack'] as const
 type FilterType = (typeof FILTER_TYPES)[number]
 
+function StoreBanner() {
+  const [dismissed, setDismissed] = useState(false)
+  const searchParams = useSearchParams()
+  const success   = searchParams.get('success') === '1'
+  const cancelled = searchParams.get('cancelled') === '1'
+  if (dismissed || (!success && !cancelled)) return null
+  return success ? (
+    <div className="mb-6 flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-emerald-500/40 bg-emerald-950/30 text-emerald-300 text-sm">
+      <span>¡Compra completada! Tu contenido estará disponible en breve.</span>
+      <button onClick={() => setDismissed(true)} className="text-white/40 hover:text-white/70">✕</button>
+    </div>
+  ) : (
+    <div className="mb-6 flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-amber-500/40 bg-amber-950/30 text-amber-300 text-sm">
+      <span>Compra cancelada. Puedes volver a intentarlo cuando quieras.</span>
+      <button onClick={() => setDismissed(true)} className="text-white/40 hover:text-white/70">✕</button>
+    </div>
+  )
+}
+
 export default function StorePage() {
   const [filter, setFilter] = useState<FilterType>('all')
 
@@ -75,6 +95,10 @@ export default function StorePage() {
       <div className="max-w-5xl mx-auto px-4 py-10">
         <h1 className="text-3xl font-bold mb-1 text-violet-300">Tienda Neo-Veridia</h1>
         <p className="text-white/50 mb-8 text-sm">Personajes premium, skins y packs de inicio</p>
+
+        <Suspense>
+          <StoreBanner />
+        </Suspense>
 
         <div className="flex gap-2 mb-8 flex-wrap">
           {FILTER_TYPES.map(t => (

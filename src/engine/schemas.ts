@@ -169,7 +169,7 @@ export const FinishGameBodySchema = z.object({
     finalCredits: z.number().int().min(0),
     finalEnergy:  z.number().int().min(0),
   })),
-  replayFrames: z.array(GameContextSchema),
+  replayFrames: z.array(z.unknown()),
   totalTurns:   z.number().int().min(1).max(40),
 })
 
